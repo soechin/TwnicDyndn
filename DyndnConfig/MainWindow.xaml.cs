@@ -14,35 +14,35 @@ namespace DyndnConfig
     public partial class MainWindow : Window
     {
         private MainViewModel Model { get; set; }
-        private string ConfigFile { get; set; }
-        private XmlDocument ConfigXml { get; set; }
+        private string Xml { get; set; }
+        private XmlDocument Config { get; set; }
 
         public MainWindow()
         {
             InitializeComponent();
             Model = DataContext as MainViewModel;
-            ConfigFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TwnicDyndn.xml");
-            ConfigXml = new XmlDocument();
+            Xml = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TwnicDyndn.xml");
+            Config = new XmlDocument();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             try
             {
-                ConfigXml.Load(ConfigFile);
+                Config.Load(Xml);
             }
             catch
             {
-                ConfigXml.AppendChild(ConfigXml.CreateXmlDeclaration("1.0", "UTF-8", null));
+                Config.AppendChild(Config.CreateXmlDeclaration("1.0", "UTF-8", null));
             }
 
-            if (ConfigXml["Login"] == null)
+            if (Config["Login"] == null)
             {
-                ConfigXml.AppendChild(ConfigXml.CreateElement("Login"));
+                Config.AppendChild(Config.CreateElement("Login"));
             }
 
-            Model.Username = ConfigXml["Login"].GetAttribute("Username");
-            Model.Password = ConfigXml["Login"].GetAttribute("Password");
+            Model.Username = Config["Login"].GetAttribute("Username");
+            Model.Password = Config["Login"].GetAttribute("Password");
             Model.Modified = false;
         }
 
@@ -88,9 +88,9 @@ namespace DyndnConfig
 
         private void Setup_Click(object sender, RoutedEventArgs e)
         {
-            ConfigXml["Login"].SetAttribute("Username", Model.Username);
-            ConfigXml["Login"].SetAttribute("Password", Model.Password);
-            ConfigXml.Save(ConfigFile);
+            Config["Login"].SetAttribute("Username", Model.Username);
+            Config["Login"].SetAttribute("Password", Model.Password);
+            Config.Save(Xml);
 
             Model.Modified = false;
         }
