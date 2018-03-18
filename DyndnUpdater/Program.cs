@@ -85,7 +85,7 @@ namespace DyndnUpdater
                 {
                     lock (obj)
                     {
-                        if (Monitor.Wait(obj, Math.Max(client.Interval, 30000)))
+                        if (Monitor.Wait(obj, Math.Max(client.Interval, 30) * 1000))
                         {
                             break;
                         }
