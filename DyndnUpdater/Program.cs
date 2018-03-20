@@ -13,25 +13,23 @@ namespace DyndnUpdater
 {
     public class Program
     {
+        public static DyndnClient Client { get; set; }
+        public static string Xml { get; set; }
+        public static XmlDocument Config { get; set; }
+
         public static void Main(string[] args)
         {
-            string xml;
-            XmlDocument config;
-            DyndnClient client;
-            object obj;
-            bool exit;
-
-            xml = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TwnicDyndn.xml");
-            config = new XmlDocument();
-            client = new DyndnClient();
+            Client = new DyndnClient();
+            Xml = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TwnicDyndn.xml");
+            Config = new XmlDocument();
 
             try
             {
-                Console.WriteLine("載入設定檔 {0}", xml);
-                config.Load(xml);
+                Console.WriteLine("載入設定檔 {0}", Xml);
+                Config.Load(Xml);
 
-                client.Username = config["Login"].GetAttribute("Username");
-                client.Password = config["Login"].GetAttribute("Password");
+                Client.Username = Config["Login"].GetAttribute("Username");
+                Client.Password = Config["Login"].GetAttribute("Password");
             }
             catch (Exception exception)
             {
@@ -39,7 +37,7 @@ namespace DyndnUpdater
                 return;
             }
 
-            client.DynServers = new DyndnServer[]
+            Client.Servers = new DyndnServer[]
             {
                 new DyndnServer
                 {
@@ -55,45 +53,7 @@ namespace DyndnUpdater
                 },
             };
 
-            obj = new object();
-            exit = false;
-
-            Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
-            {
-                lock (obj)
-                {
-                    Monitor.Pulse(obj);
-                    exit = true;
-
-                    e.Cancel = true;
-                }
-            };
-
-            while (!exit)
-            {
-                if (!client.Query())
-                {
-                    break;
-                }
-
-                if (!client.Login())
-                {
-                    break;
-                }
-
-                while (client.Update())
-                {
-                    lock (obj)
-                    {
-                        if (Monitor.Wait(obj, Math.Max(client.Interval, 30) * 1000))
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                client.Logout();
-            }
+            Client.Query();
         }
     }
 
@@ -116,264 +76,196 @@ namespace DyndnUpdater
 
         public string Username { get; set; }
         public string Password { get; set; }
-        public DyndnServer[] DynServers { get; set; }
-        public DyndnServer[] NameServers { get; set; }
-        public DyndnServer LoggedServer { get; set; }
-        public int Interval { get; set; }
-        public int Session { get; set; }
+        public DyndnServer[] Servers { get; set; }
 
-        private string Send(DyndnServer server, string request)
+        private DyndnServer[] _nameServers;
+        private TcpClient _tcpClient;
+        private UdpClient _udpClient;
+
+        private bool Open(DyndnServer server)
         {
-            IPEndPoint endpoint;
-            UdpClient client;
-            byte[] buffer;
+            IAsyncResult result;
 
-            try
+            if (server.Protocol == ProtocolType.Tcp)
             {
-                endpoint = new IPEndPoint(Dns.GetHostAddresses(server.Host)[0], server.Port);
-            }
-            catch (Exception exception)
-            {
-                Console.WriteLine(exception.Message);
-                return null;
-            }
-
-            if (server.Protocol == ProtocolType.Udp)
-            {
-                client = new UdpClient();
+                _tcpClient = new TcpClient();
 
                 try
                 {
-                    buffer = Encoding.Default.GetBytes(request);
-                    client.Send(buffer, buffer.Length, endpoint);
+                    result = _tcpClient.BeginConnect(server.Host, server.Port, null, null);
 
-                    buffer = client.Receive(ref endpoint);
-                    return Encoding.Default.GetString(buffer).TrimEnd('\0');
+                    if (result.AsyncWaitHandle.WaitOne(3000))
+                    {
+                        _tcpClient.EndConnect(result);
+                        return true;
+                    }
                 }
                 catch (Exception exception)
                 {
                     Console.WriteLine(exception.Message);
                 }
-                finally
+
+                _tcpClient.Close();
+                _tcpClient = null;
+            }
+
+            if (server.Protocol == ProtocolType.Udp)
+            {
+                _udpClient = new UdpClient();
+
+                try
                 {
-                    client.Close();
+                    _udpClient.Connect(server.Host, server.Port);
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine(exception.Message);
+                }
+
+                _udpClient.Close();
+                _udpClient = null;
+            }
+
+            return false;
+        }
+
+        private void Close()
+        {
+            if (_tcpClient != null)
+            {
+                _tcpClient.Close();
+                _tcpClient = null;
+            }
+
+            if (_udpClient != null)
+            {
+                _udpClient.Close();
+                _udpClient = null;
+            }
+        }
+
+        private string Send(string request)
+        {
+            byte[] buffer;
+            int length;
+            IPEndPoint endpoint;
+            IAsyncResult result;
+
+            if (_tcpClient != null)
+            {
+                try
+                {
+                    using (NetworkStream stream = _tcpClient.GetStream())
+                    {
+                        buffer = Encoding.Default.GetBytes(request);
+                        stream.Write(buffer, 0, buffer.Length);
+
+                        buffer = new byte[256];
+                        result = stream.BeginRead(buffer, 0, buffer.Length, null, null);
+
+                        if (result.AsyncWaitHandle.WaitOne(3000))
+                        {
+                            length = stream.EndRead(result);
+                            return Encoding.Default.GetString(buffer, 0, length);
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine(exception.Message);
+                }
+            }
+
+            if (_udpClient != null)
+            {
+                try
+                {
+                    buffer = Encoding.Default.GetBytes(request);
+                    _udpClient.Send(buffer, buffer.Length, null);
+
+                    endpoint = null;
+                    result = _udpClient.BeginReceive(null, null);
+
+                    if (result.AsyncWaitHandle.WaitOne(3000))
+                    {
+                        buffer = _udpClient.EndReceive(result, ref endpoint);
+                        return Encoding.Default.GetString(buffer);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine(exception.Message);
                 }
             }
 
             return null;
         }
 
-        public bool Query()
+        private void Parse(string response)
         {
-            List<DyndnServer> servers;
             string[] lines, tokens;
-            string request, response;
+            List<DyndnServer> servers;
 
-            NameServers = null;
-
-            request = string.Format("102 {0} {1}\r\n", Username, Password);
+            lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
             servers = new List<DyndnServer>();
 
-            foreach (DyndnServer server in DynServers)
-            {
-                Console.WriteLine("送出請求 102 {0}", server);
-                response = Send(server, request);
-
-                if (response == null)
-                {
-                    continue;
-                }
-
-                lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (string line in lines)
-                {
-                    Console.WriteLine("收到回應 {0}", line);
-                    tokens = line.Split(new string[] { " " }, StringSplitOptions.None);
-
-                    if (tokens[0] == "201") // 伺服器資訊
-                    {
-                        if (tokens[3] == "tcp")
-                        {
-                            servers.Add(new DyndnServer
-                            {
-                                Host = tokens[1],
-                                Port = int.Parse(tokens[2]),
-                                Protocol = ProtocolType.Tcp,
-                            });
-                        }
-                        else if (tokens[3] == "udp")
-                        {
-                            servers.Add(new DyndnServer
-                            {
-                                Host = tokens[1],
-                                Port = int.Parse(tokens[2]),
-                                Protocol = ProtocolType.Udp,
-                            });
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("非預期的回應 {0}", tokens[0]);
-                    }
-                }
-
-                if (servers.Count > 0)
-                {
-                    NameServers = servers.ToArray();
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public bool Login()
-        {
-            string[] lines, tokens;
-            string request, response;
-
-            LoggedServer = null;
-            Session = 0;
-
-            request = string.Format("101 150 {0} {1}.{2} {3} {4}\r\n",
-                GetSystemDefaultLangID(), Environment.OSVersion.Version.Major,
-                Environment.OSVersion.Version.Minor, Username, Password);
-
-            foreach (DyndnServer server in NameServers)
-            {
-                Console.WriteLine("送出請求 101 {0}", server);
-                response = Send(server, request);
-
-                if (response == null)
-                {
-                    continue;
-                }
-
-                lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (string line in lines)
-                {
-                    Console.WriteLine("收到回應 {0}", line);
-                    tokens = line.Split(new string[] { " " }, StringSplitOptions.None);
-
-                    if (tokens[0] == "205") // 更新間隔
-                    {
-                        Interval = int.Parse(tokens[1]);
-                    }
-                    else if (tokens[0] == "209") // 會話編號
-                    {
-                        Session = int.Parse(tokens[1]);
-                    }
-                    else
-                    {
-                        Console.WriteLine("非預期的回應 {0}", tokens[0]);
-                    }
-                }
-
-                if (Session != 0)
-                {
-                    LoggedServer = server;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public bool Logout()
-        {
-            string[] lines, tokens;
-            string request, response;
-            bool ok;
-
-            request = string.Format("104 {0}\r\n", Username);
-
-            if (LoggedServer == null)
-            {
-                return false;
-            }
-
-            Console.WriteLine("送出請求 104 {0}", LoggedServer);
-            response = Send(LoggedServer, request);
-
-            if (response == null)
-            {
-                return false;
-            }
-
-            lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-            ok = false;
-
             foreach (string line in lines)
             {
-                Console.WriteLine("收到回應 {0}", line);
                 tokens = line.Split(new string[] { " " }, StringSplitOptions.None);
 
-                if (tokens[0] == "200") // OK
+                if (tokens[0] == "201")
                 {
-                    ok = true;
+                    if (tokens[3] == "tcp")
+                    {
+                        servers.Add(new DyndnServer
+                        {
+                            Host = tokens[1],
+                            Port = int.Parse(tokens[2]),
+                            Protocol = ProtocolType.Tcp,
+                        });
+                    }
+                    else if (tokens[3] == "udp")
+                    {
+                        servers.Add(new DyndnServer
+                        {
+                            Host = tokens[1],
+                            Port = int.Parse(tokens[2]),
+                            Protocol = ProtocolType.Udp,
+                        });
+                    }
                 }
-                else
+                else if (tokens[0] == "202")
                 {
-                    Console.WriteLine("非預期的回應 {0}", tokens[0]);
                 }
             }
 
-            if (ok)
+            if (servers.Count > 0)
             {
-                LoggedServer = null;
-                Session = 0;
+                _nameServers = servers.ToArray();
             }
-
-            return ok;
         }
 
-        public bool Update()
+        public void Query()
         {
-            string[] lines, tokens;
             string request, response;
-            bool ok;
 
-            request = string.Format("103 {0} {1}\r\n", Session, Username);
+            request = string.Format("102 {0} {1}\r\n", Username, Password);
 
-            if (LoggedServer == null)
+            foreach (DyndnServer server in Servers)
             {
-                return false;
-            }
-
-            Console.WriteLine("送出請求 103 {0}", LoggedServer);
-            response = Send(LoggedServer, request);
-
-            if (response == null)
-            {
-                return false;
-            }
-
-            lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
-            ok = false;
-
-            foreach (string line in lines)
-            {
-                Console.WriteLine("收到回應 {0}", line);
-                tokens = line.Split(new string[] { " " }, StringSplitOptions.None);
-
-                if (tokens[0] == "205") // 更新間隔
+                if (Open(server))
                 {
-                    Interval = int.Parse(tokens[1]);
-                    ok = true;
-                }
-                else if (tokens[0] == "208") // 重新連線?
-                {
-                    ok = true;
-                }
-                else
-                {
-                    Console.WriteLine("非預期的回應 {0}", tokens[0]);
+                    response = Send(request);
+
+                    if (response != null)
+                    {
+                        Parse(response);
+                    }
+
+                    Close();
                 }
             }
-
-            return ok;
         }
     }
 }
