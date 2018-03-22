@@ -29,7 +29,7 @@ namespace DyndnUpdater
 
             try
             {
-                Console.WriteLine("載入設定檔 {0}", Xml);
+                Client.Println("載入設定檔 {0}", Xml);
                 Config.Load(Xml);
 
                 Client.Username = Config["Login"].GetAttribute("Username");
@@ -37,7 +37,7 @@ namespace DyndnUpdater
             }
             catch (Exception exception)
             {
-                Console.WriteLine(exception.Message);
+                Client.Println(exception.Message);
                 return;
             }
 
@@ -160,7 +160,7 @@ namespace DyndnUpdater
                 }
                 catch (Exception exception)
                 {
-                    Console.WriteLine(exception.Message);
+                    Println(exception.Message);
                 }
 
                 _tcpClient.Close();
@@ -178,7 +178,7 @@ namespace DyndnUpdater
                 }
                 catch (Exception exception)
                 {
-                    Console.WriteLine(exception.Message);
+                    Println(exception.Message);
                 }
 
                 _udpClient.Close();
@@ -231,7 +231,7 @@ namespace DyndnUpdater
                 }
                 catch (Exception exception)
                 {
-                    Console.WriteLine(exception.Message);
+                    Println(exception.Message);
                 }
             }
 
@@ -253,7 +253,7 @@ namespace DyndnUpdater
                 }
                 catch (Exception exception)
                 {
-                    Console.WriteLine(exception.Message);
+                    Println(exception.Message);
                 }
             }
 
@@ -273,7 +273,7 @@ namespace DyndnUpdater
             lines = response.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
             servers = new List<DyndnServer>();
 
-            Console.WriteLine("收到回應 {0}", string.Join(", ", lines));
+            Println("收到回應 {0}", string.Join(", ", lines));
 
             foreach (string line in lines)
             {
@@ -309,9 +309,9 @@ namespace DyndnUpdater
                     _loginInterval = int.Parse(tokens[1]);
                     _updateSuccess = true;
                 }
-                else if (tokens[0] == "208") // 更新速度太快
+                else if (tokens[0] == "208") // 重新登入
                 {
-                    _updateSuccess = true;
+                    _updateSuccess = false;
                 }
                 else if (tokens[0] == "209") // 會話編號
                 {
@@ -319,7 +319,7 @@ namespace DyndnUpdater
                 }
                 else
                 {
-                    Console.WriteLine("非預期的回應 {0}", tokens[0]);
+                    Println("非預期的回應 {0}", tokens[0]);
                 }
             }
 
@@ -346,7 +346,7 @@ namespace DyndnUpdater
             request = string.Format("102 {0} {1}\r\n", _username, _password);
             server = _servers[_serverIndex];
 
-            Console.WriteLine("送出請求 102 {0}", server);
+            Println("送出請求 102 {0}", server);
 
             if (Open(server))
             {
@@ -377,7 +377,7 @@ namespace DyndnUpdater
                 Environment.OSVersion.Version.Minor, _username, _password);
             server = _loginServers[_loginServerIndex];
 
-            Console.WriteLine("送出請求 101 {0}", server);
+            Println("送出請求 101 {0}", server);
 
             if (Open(server))
             {
@@ -404,7 +404,7 @@ namespace DyndnUpdater
             request = string.Format("104 {0}\r\n", _username);
             server = _loginServers[_loginServerIndex];
 
-            Console.WriteLine("送出請求 104 {0}", server);
+            Println("送出請求 104 {0}", server);
 
             if (Open(server))
             {
@@ -431,7 +431,7 @@ namespace DyndnUpdater
             request = string.Format("103 {0} {1}\r\n", _loginSession, _username);
             server = _loginServers[_loginServerIndex];
 
-            Console.WriteLine("送出請求 103 {0}", server);
+            Println("送出請求 103 {0}", server);
 
             if (Open(server))
             {
@@ -446,6 +446,11 @@ namespace DyndnUpdater
             }
 
             return _updateSuccess;
+        }
+
+        public void Println(string format, params object[] args)
+        {
+            Console.WriteLine("[{0}] {1}", DateTime.Now, string.Format(format, args));
         }
     }
 }
